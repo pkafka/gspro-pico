@@ -32,8 +32,10 @@ unsigned long lastDebounceTime[numButtons] = {0};
 const unsigned long debounceDelay = 50; // 50ms filtering window
 
 void setup() {
+  // Pass an explicit character array to force the initialization string block
   KeyboardBLE.begin("GSPro Box");
   
+  // Configure all arcade input pins with internal PULLUP resistors
   for (int i = 0; i < numButtons; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
   }
