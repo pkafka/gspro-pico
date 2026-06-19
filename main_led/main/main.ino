@@ -1,9 +1,14 @@
 #include <KeyboardBLE.h> // Handles the secure LE pairing engine natively
+#include <Adafruit_NeoPixel.h>
 
 // --- PIN ALLOCATIONS ---
 const int buttonPins[] = {10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28, 6, 7};
 const int numButtons   = 18;
-const int ropeLightPin = 9; // Drives the optocoupler module for the 12V rope light
+const int LED_PIN      = 9;  // Drives the 5V WS2812B Data Line
+
+// --- LED STRIP CONFIGURATION ---
+#define NUM_LEDS 30          // Change this to the exact number of LEDs on your strip
+Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // --- NATIVE USB SCAN CODE KEY MAP ---
 const char keyMap[]    = {
@@ -32,6 +37,14 @@ unsigned long lastDebounceTime[numButtons] = {0};
 // State variable to track camera mode
 bool isFreeFlight = false; 
 
+// --- HELPER FUNCTION FOR STRIP COLORS ---
+void setStripColor(uint8_t r, uint8_t g, uint8_t b) {
+  for(int i = 0; i < NUM_LEDS; i++) {
+    strip.setPixelColor(i, strip.Color(r, g, b));
+  }
+  strip.show();
+}
+
 void setup() {
   // Initialize the Bluetooth HID service and assign the broadcast name cleanly
   KeyboardBLE.begin("GSPro Box");
@@ -41,9 +54,10 @@ void setup() {
     pinMode(buttonPins[i], INPUT_PULLUP);
   }
 
-  // Configure the MOSFET module control pin as an active output
-  pinMode(ropeLightPin, OUTPUT);
-  digitalWrite(ropeLightPin, HIGH); // Start with rope light steady ON
+  // Initialize NeoPixel Strip
+  strip.begin();
+  strip.setBrightness(150); // Set global brightness (0 to 255) to manage draw/heat
+  setStripColor(0, 180, 40); // Initial State: Solid Golf Green
 }
 
 void loop() {
@@ -55,13 +69,12 @@ void loop() {
     int reading = digitalRead(currentPin);
     
     // --- DYNAMIC DEBOUNCE CALCULATOR ---
-    // Default standard inputs to a stable 50ms to prevent jumpy/double inputs
     unsigned long currentDelay = 50; 
     
-    // If we are actively in Free Flight mode, drop the joystick and altitude pins down to 5ms
+    // Drop latency down if actively flying
     if (isFreeFlight) {
       if ((currentPin >= 10 && currentPin <= 13) || currentPin == 6 || currentPin == 7) {
-        currentDelay = 5; // Lightning fast response for flying
+        currentDelay = 5; 
       }
     }
 
@@ -73,14 +86,21 @@ void loop() {
       if (currentPin == 28) {
         isFreeFlight = !isFreeFlight; // Flip the state
         KeyboardBLE.press(KEY_F5);
+        
+        // Shift light profile instantly based on camera state
+        if (isFreeFlight) {
+          setStripColor(0, 100, 255); // Blue tint for flight mode
+        } else {
+          setStripColor(0, 180, 40);  // Return to Green for normal play
+        }
       }
       
       // =======================================================
       // AUTO-RESET SAFETY CATCH (PIN 16 / PIN 27)
       // =======================================================
-      // If Reset Aim or Escape is hit, force the box out of free flight mode
       else if (currentPin == 27 || currentPin == 16) {
         isFreeFlight = false; 
+        setStripColor(0, 180, 40); // Restore normal green profile
         KeyboardBLE.press(keyMap[i]);
       }
 
@@ -94,13 +114,16 @@ void loop() {
         delay(50);
         KeyboardBLE.releaseAll();
 
-        // Perform a dramatic flash-off sequence against the steady-on state
+        // Perform a quick triple-pulse flash sequence natively down the data line
         for (int flash = 0; flash < 3; flash++) {
-          digitalWrite(ropeLightPin, LOW);  // Turn OFF
+          setStripColor(0, 0, 0);       // Blackout
           delay(120);                      
-          digitalWrite(ropeLightPin, HIGH); // Turn ON 
+          setStripColor(255, 180, 0);   // High visibility amber alert pulse
           delay(120);                      
         }
+        
+        // Return to standard play lighting state
+        setStripColor(0, 180, 40);
       } 
       
       // =======================================================
@@ -110,7 +133,7 @@ void loop() {
         KeyboardBLE.press(keyMap[i]);
       }
       
-      // Hardware safety debounce trap (Wait until finger/foot lifts off switch)
+      // Hardware safety debounce trap (Wait until foot/finger completely clears switch)
       while(digitalRead(currentPin) == LOW) {
         delay(5); 
       }
@@ -122,5 +145,5 @@ void loop() {
       lastDebounceTime[i] = millis();
     }
   }
-  delay(systemTickDelay); // Smooth dynamic clock adjustment
+  delay(systemTickDelay); 
 }
