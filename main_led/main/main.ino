@@ -4,10 +4,10 @@
 // --- PIN ALLOCATIONS ---
 const int buttonPins[] = {10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 27, 28, 6, 7};
 const int numButtons   = 18;
-const int LED_PIN      = 9;  // Drives the 5V WS2812B Data Line
+const int LED_PIN      = 9;  // Drives the 5V WS2812B Data Line through the level shifter
 
 // --- LED STRIP CONFIGURATION ---
-#define NUM_LEDS 30          // Change this to the exact number of LEDs on your strip
+#define NUM_LEDS 30          // TODO: Change this to the exact number of LEDs on your final strip
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // --- NATIVE USB SCAN CODE KEY MAP ---
@@ -33,16 +33,27 @@ const char keyMap[]    = {
 };
 
 unsigned long lastDebounceTime[numButtons] = {0};
+uint16_t rainbowHue = 0; // Tracks the color wheel position smoothly
 
 // State variable to track camera mode
 bool isFreeFlight = false; 
 
-// --- HELPER FUNCTION FOR STRIP COLORS ---
+// --- HELPER FUNCTION FOR SOLID COLORS ---
 void setStripColor(uint8_t r, uint8_t g, uint8_t b) {
   for(int i = 0; i < NUM_LEDS; i++) {
     strip.setPixelColor(i, strip.Color(r, g, b));
   }
   strip.show();
+}
+
+// --- HELPER FUNCTION FOR RAINBOW ANIMATION FRAME ---
+void cycleRainbowFrame() {
+  for (int i = 0; i < strip.numPixels(); i++) {
+    int pixelHue = rainbowHue + (i * 65536L / strip.numPixels());
+    strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue, 255, 150))); // Brighter for production build
+  }
+  strip.show();
+  rainbowHue += 1200; // Speed of the rainbow cycle color shift
 }
 
 void setup() {
@@ -56,7 +67,7 @@ void setup() {
 
   // Initialize NeoPixel Strip
   strip.begin();
-  strip.setBrightness(150); // Set global brightness (0 to 255) to manage draw/heat
+  strip.setBrightness(150); // High global brightness for final enclosure visibility
   setStripColor(0, 180, 40); // Initial State: Solid Golf Green
 }
 
@@ -87,11 +98,11 @@ void loop() {
         isFreeFlight = !isFreeFlight; // Flip the state
         KeyboardBLE.press(KEY_F5);
         
-        // Shift light profile instantly based on camera state
+        // Instant static color shifts for mode awareness
         if (isFreeFlight) {
-          setStripColor(0, 100, 255); // Blue tint for flight mode
+          setStripColor(0, 100, 255); // Flight Blue
         } else {
-          setStripColor(0, 180, 40);  // Return to Green for normal play
+          setStripColor(0, 180, 40);  // Standard Golf Green
         }
       }
       
@@ -100,12 +111,12 @@ void loop() {
       // =======================================================
       else if (currentPin == 27 || currentPin == 16) {
         isFreeFlight = false; 
-        setStripColor(0, 180, 40); // Restore normal green profile
+        setStripColor(0, 180, 40); // Force back to green baseline
         KeyboardBLE.press(keyMap[i]);
       }
 
       // =======================================================
-      // CUSTOM MULLIGAN MACRO (PIN 14 - CTRL + M + FLASH)
+      // CUSTOM MULLIGAN MACRO (PIN 14 - CTRL + M + AMBER STROBE)
       // =======================================================
       else if (currentPin == 14) {
         KeyboardBLE.press(KEY_LEFT_CTRL);
@@ -114,32 +125,42 @@ void loop() {
         delay(50);
         KeyboardBLE.releaseAll();
 
-        // Perform a quick triple-pulse flash sequence natively down the data line
+        // High visibility triple amber alert pulse sequence
         for (int flash = 0; flash < 3; flash++) {
-          setStripColor(0, 0, 0);       // Blackout
+          setStripColor(0, 0, 0);       // Dark
           delay(120);                      
-          setStripColor(255, 180, 0);   // High visibility amber alert pulse
+          setStripColor(255, 130, 0);   // Punchy Deep Amber
           delay(120);                      
         }
         
-        // Return to standard play lighting state
-        setStripColor(0, 180, 40);
+        // Revert cleanly back to whatever state the box is currently in
+        if (isFreeFlight) setStripColor(0, 100, 255);
+        else setStripColor(0, 180, 40);
       } 
       
       // =======================================================
-      // STANDARD SINGLE KEY PRESSES
+      // STANDARD BUTTON PRESSED -> RAINBOW ANIMATION RUN
       // =======================================================
       else {
         KeyboardBLE.press(keyMap[i]);
+        
+        // Run the rainbow wave loop as long as the button is down (minimum 800ms)
+        unsigned long startTime = millis();
+        while(digitalRead(currentPin) == LOW || (millis() - startTime < 800)) {
+          cycleRainbowFrame();
+          delay(20); // Silky smooth 50 FPS refresh rate
+        }
+        
+        KeyboardBLE.release(keyMap[i]);
+        
+        // Revert clean to baseline state upon finger/foot lift
+        if (isFreeFlight) setStripColor(0, 100, 255);
+        else setStripColor(0, 180, 40);
       }
       
-      // Hardware safety debounce trap (Wait until foot/finger completely clears switch)
+      // Hardware safety debounce lock
       while(digitalRead(currentPin) == LOW) {
         delay(5); 
-      }
-      
-      if (currentPin != 14) {
-        KeyboardBLE.release(keyMap[i]);
       }
       
       lastDebounceTime[i] = millis();
